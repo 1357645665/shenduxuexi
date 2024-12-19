@@ -1,0 +1,118 @@
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import os
+import librosa
+import librosa.display
+import glob
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, Flatten, Dense, MaxPool2D, Dropout
+from tensorflow.keras.utils import to_categorical
+from sklearn.model_selection import train_test_split
+from tqdm import tqdm
+
+# 类别标签
+label_dict = {'aloe': 0, 'burger': 1, 'cabbage': 2, 'candied_fruits': 3, 'carrots': 4, 'chips': 5,
+              'chocolate': 6, 'drinks': 7, 'fries': 8, 'grapes': 9, 'gummies': 10, 'ice-cream': 11,
+              'jelly': 12, 'noodles': 13, 'pickles': 14, 'pizza': 15, 'ribs': 16, 'salmon': 17,
+              'soup': 18, 'wings': 19}
+label_dict_inv = {v: k for k, v in label_dict.items()}
+
+# 提取特征的函数
+def extract_features(parent_dir, sub_dirs, max_file=100, file_ext="*.wav"):
+    features, labels = [], []
+    for sub_dir in sub_dirs:
+        for fn in tqdm(glob.glob(os.path.join(parent_dir, sub_dir, file_ext))[:max_file]):
+            label_name = fn.split(os.sep)[-2]
+            if label_name in label_dict:
+                labels.append(label_dict[label_name])
+            else:
+                print(f"Label '{label_name}' not found in label_dict. Skipping file: {fn}")
+            X, sample_rate = librosa.load(fn, res_type='kaiser_fast')
+            mels = np.mean(librosa.feature.melspectrogram(y=X, sr=sample_rate).T, axis=0)
+            features.append(mels)
+    return np.array(features), np.array(labels)
+
+# 数据路径设置
+parent_dir = 'C:\\Users\\AIERXUAN\\Desktop\\深度学习\\课设\\train'
+sub_dirs = ['aloe', 'burger', 'cabbage', 'candied_fruits', 'carrots', 'chips', 'chocolate', 'drinks', 'fries',
+            'grapes', 'gummies', 'ice-cream', 'jelly', 'noodles', 'pickles', 'pizza', 'ribs', 'salmon', 'soup', 'wings']
+
+# 获取特征和标签
+X, Y = extract_features(parent_dir, sub_dirs, max_file=10000)
+print('特征尺寸:', X.shape)
+print('标签尺寸:', Y.shape)
+
+# 类别标签转换为one-hot编码
+Y = to_categorical(Y, num_classes=20)
+
+# 切分训练集和测试集
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, random_state=1, stratify=Y)
+X_train = X_train.reshape(-1, 16, 8, 1)
+X_test = X_test.reshape(-1, 16, 8, 1)
+print(f'训练集大小: {X_train.shape}, 测试集大小: {X_test.shape}')
+
+# 搭建卷积神经网络模型
+model = Sequential()
+model.add(Conv2D(64, (3, 3), padding="same", activation="tanh", input_shape=(16, 8, 1)))
+model.add(MaxPool2D(pool_size=(2, 2)))
+model.add(Conv2D(128, (3, 3), padding="same", activation="relu"))
+model.add(MaxPool2D(pool_size=(2, 2)))
+model.add(Dropout(0.49))
+model.add(Flatten())
+model.add(Dense(2048, activation="relu"))
+model.add(Dense(20, activation="softmax"))
+
+# 编译模型
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.summary()
+
+# 训练模型，并保存训练历史
+history = model.fit(X_train, Y_train, epochs=20, batch_size=660, validation_data=(X_test, Y_test))
+
+# 绘制训练过程的图表
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+epochs = range(1, len(acc) + 1)
+
+plt.figure(figsize=(12, 4))
+
+# 绘制训练&验证准确率图
+plt.subplot(1, 2, 1)
+plt.plot(epochs, acc, 'bo', label='Training acc')
+plt.plot(epochs, val_acc, 'b', label='Validation acc')
+plt.title('Training and validation accuracy')
+plt.legend()
+
+# 绘制训练&验证损失图
+plt.subplot(1, 2, 2)
+plt.plot(epochs, loss, 'bo', label='Training loss')
+plt.plot(epochs, val_loss, 'b', label='Validation loss')
+plt.title('Training and validation loss')
+plt.legend()
+
+plt.show()
+
+# 提取测试集特征并进行预测
+def extract_features_test(test_dir, file_ext="*.wav"):
+    features = []
+    for fn in tqdm(glob.glob(os.path.join(test_dir, file_ext))[:]):
+        X, sample_rate = librosa.load(fn, res_type='kaiser_fast')
+        mels = np.mean(librosa.feature.melspectrogram(y=X, sr=sample_rate).T, axis=0)
+        features.append(mels)
+    return np.array(features)
+
+# 测试集路径
+X_test = extract_features_test('C:\\Users\\AIERXUAN\\Desktop\\深度学习\\课设\\test_a')
+predictions = model.predict(X_test.reshape(-1, 16, 8, 1))
+preds = np.argmax(predictions, axis=1)
+preds = [label_dict_inv[x] for x in preds]
+
+# 保存结果
+path = glob.glob('C:\\Users\\AIERXUAN\\Desktop\\深度学习\\课设\\test_a/*.wav')
+result = pd.DataFrame({'name': path, 'label': preds})
+result['name'] = result['name'].apply(lambda x: x.split(os.sep)[-1])
+result.to_csv('submit.csv', index=None)
